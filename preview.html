@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PrepMind AI - Gemini</title>
+<style>
+body{background:#06060a;color:#fff;font-family:'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;margin:0;padding:20px}
+.card{background:#11121a;padding:20px;border-radius:15px;margin:10px 0}
+input,button,textarea,select{width:100%;padding:12px;margin:8px 0;border:none;border-radius:10px}
+button{background:#e8ff5a;color:#000;font-weight:bold;cursor:pointer}
+.hidden{display:none}
+.tab{display:inline-block;padding:10px 15px;background:#222;margin:5px;border-radius:20px;cursor:pointer}
+.active{background:#e8ff5a;color:#000}
+.msg{padding:10px;border-radius:10px;margin:8px 0}
+.user{background:#1c1f2b}
+.ai{background:#28304a}
+</style>
+</head>
+<body>
+<h1>🧠 PrepMind AI (Gemini)</h1>
+
+<div class="card" id="landing">
+<input id="apiKey" placeholder="Enter Google API key">
+<input id="exam" placeholder="Exam name (CAT, GATE, TCS NQT)">
+<button onclick="startPrep()">Start</button>
+</div>
+
+<div class="hidden" id="app">
+<div>
+<span class="tab active" onclick="showTab('overview',this)">Overview</span>
+<span class="tab" onclick="showTab('practice',this)">Practice</span>
+<span class="tab" onclick="showTab('teach',this)">Teach Me</span>
+<span class="tab" onclick="showTab('doubt',this)">Ask Doubt</span>
+<span class="tab" onclick="showTab('progress',this)">Progress</span>
+</div>
+
+<div id="overview" class="card"></div>
+
+<div id="practice" class="card hidden">
+<select id="difficulty">
+<option>Easy</option>
+<option>Medium</option>
+<option>Hard</option>
+</select>
+<button onclick="generateMCQ()">Generate MCQ</button>
+<div id="mcq"></div>
+</div>
+
+<div id="teach" class="card hidden">
+<input id="topic" placeholder="Topic name">
+<button onclick="teachTopic()">Teach</button>
+<div id="teachBox"></div>
+</div>
+
+<div id="doubt" class="card hidden">
+<div id="chat"></div>
+<textarea id="doubtInput"></textarea>
+<button onclick="askDoubt()">Ask</button>
+</div>
+
+<div id="progress" class="card hidden">
+<div id="stats"></div>
+</div>
+</div>
+
+<script>
+let examName="", apiKey="", score=0, total=0, history=[];
+
+const saved = JSON.parse(localStorage.getItem("prepMind") || "{}");
+score=saved.score||0;
+total=saved.total||0;
+
+function save(){
+localStorage.setItem("prepMind",JSON.stringify({score,total}));
+}
+
+function showTab(id,el){
+["overview","practice","teach","doubt","progress"].forEach(x=>{
+document.getElementById(x).classList.add("hidden");
+});
+document.getElementById(id).classList.remove("hidden");
+
+document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+el.classList.add("active");
+updateProgress();
+}
+
+async function gemini(prompt){
+const res = await fetch(
+`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+{
+method:"POST",
+headers:{"Content-Type":"application/json"},
+body:JSON.stringify({
+contents:[{
+parts:[{text:prompt}]
+}]
+})
+}
+);
+const data = await res.json();
+return data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response";
+}
+
+async function startPrep(){
+apiKey=document.getElementById("apiKey").value;
+examName=document.getElementById("exam").value;
+
+if(!apiKey || !examName){
+alert("Enter API key and exam");
+return;
+}
+
+document.getElementById("landing").classList.add("hidden");
+document.getElementById("app").classList.remove("hidden");
+
+const txt = await gemini(
+`Give overview of ${examName} including pattern, difficulty, strategy and syllabus topics`
+);
+
+document.getElementById("overview").innerHTML =
+`<h2>${examName}</h2><pre>${txt}</pre>`;
+}
+
+async function generateMCQ(){
+document.getElementById("mcq").innerHTML="Loading...";
+
+const difficulty=document.getElementById("difficulty").value;
+
+const response = await gemini(
+`Generate one ${difficulty} MCQ for ${examName}.
+Return JSON:
+{
+"question":"",
+"options":["","","",""],
+"correctIndex":0,
+"explanation":"",
+"shortcut":""
+}`
+);
+
+try{
+const json = JSON.parse(response.match(/\{[\s\S]*\}/)[0]);
+
+let html=`<h3>${json.question}</h3>`;
+document.getElementById("mcq").innerHTML=html;
+
+json.options.forEach((o,i)=>{
+const btn=document.createElement("button");
+btn.innerText=o;
+
+btn.onclick=()=>{
+total++;
+if(i===json.correctIndex){
+score++;
+btn.style.background="green";
+}else{
+btn.style.background="red";
+}
+
+save();
+
+document.getElementById("mcq").innerHTML +=
+`<p><b>Explanation:</b> ${json.explanation}</p>
+<p><b>Shortcut:</b> ${json.shortcut}</p>`;
+updateProgress();
+};
+
+document.getElementById("mcq").appendChild(btn);
+});
+}catch(e){
+document.getElementById("mcq").innerText=response;
+}
+}
+
+async function teachTopic(){
+const topic=document.getElementById("topic").value;
+const res=await gemini(
+`Teach ${topic} for ${examName} with examples and shortcuts`
+);
+document.getElementById("teachBox").innerHTML=`<pre>${res}</pre>`;
+}
+
+async function askDoubt(){
+const text=document.getElementById("doubtInput").value;
+if(!text)return;
+
+document.getElementById("chat").innerHTML +=
+`<div class='msg user'>${text}</div>`;
+
+history.push(text);
+
+const res=await gemini(
+`Exam: ${examName}
+Chat history: ${history.join("\n")}
+Answer clearly`
+);
+
+document.getElementById("chat").innerHTML +=
+`<div class='msg ai'>${res}</div>`;
+
+document.getElementById("doubtInput").value="";
+}
+
+function updateProgress(){
+const acc = total ? ((score/total)*100).toFixed(1):0;
+document.getElementById("stats").innerHTML=
+`<h3>Progress</h3>
+<p>Score: ${score}</p>
+<p>Total: ${total}</p>
+<p>Accuracy: ${acc}%</p>`;
+}
+</script>
+</body>
+</html>
